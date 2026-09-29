@@ -11,19 +11,58 @@
 // usando multer com diskStorage. Não utilize provedores externos.
 
 const express = require('express');
+const documentRoutes = require('./routes/documents.routes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
-
-const documentRoutes = require('./routes/documents');
+app.use(documentRoutes);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.use('/', documentRoutes);
+app.use((req, res) => {
+  res.status(404).json({
+    error: { code: 'NOT_FOUND', message: 'Rota não encontrada.' },
+  });
+});
+
+app.use((error, req, res, next) => {
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  const uploadErrors = {
+    LIMIT_FILE_SIZE: {
+      status: 413,
+      code: 'FILE_TOO_LARGE',
+      message: 'O arquivo excede o tamanho máximo permitido.',
+    },
+    LIMIT_UNEXPECTED_FILE: {
+      status: 400,
+      code: 'INVALID_FILE_FIELD',
+      message: 'Envie um único arquivo no campo "file".',
+    },
+    LIMIT_FIELD_COUNT: {
+      status: 400,
+      code: 'INVALID_MULTIPART_REQUEST',
+      message: 'O envio aceita somente um arquivo no campo "file".',
+    },
+  };
+  const mappedError = uploadErrors[error.code];
+  const status = mappedError?.status || error.status || 500;
+  const code = mappedError?.code || (status >= 500 ? 'INTERNAL_ERROR' : error.code);
+  const message = mappedError?.message
+    || (status >= 500 ? 'Erro interno do servidor.' : error.message);
+
+  if (status >= 500) {
+    console.error(error);
+  }
+
+  return res.status(status).json({ error: { code, message } });
+});
 
 if (require.main === module) {
   app.listen(PORT, () => {

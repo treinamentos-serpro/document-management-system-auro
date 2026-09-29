@@ -1,21 +1,21 @@
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
+const { once } = require('node:events');
+
+const storageDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'dms-test-'));
+process.env.STORAGE_DIR = storageDirectory;
+process.env.MAX_UPLOAD_SIZE_BYTES = '64';
 const app = require('../src/app');
-
-test('o app backend é exportado', () => {
-  assert.ok(app, 'o app deve estar definido');
-  assert.strictEqual(typeof app, 'function', 'o app Express deve ser uma função');
-});
-
-const storagePath = path.join(__dirname, '../storage');
+const fileRepository = require('../src/repositories/fileRepository');
 let server;
 let baseUrl;
 
 before(async () => {
   server = app.listen(0);
-  await new Promise((resolve) => server.once('listening', resolve));
+  await once(server, 'listening');
   baseUrl = `http://127.0.0.1:${server.address().port}`;
 });
 
@@ -23,54 +23,131 @@ after(async () => {
   await new Promise((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
+  await fs.promises.rm(storageDirectory, { recursive: true, force: true });
 });
 
-test('upload, listagem e download de documento', async (t) => {
-  const filesBeforeUpload = new Set(fs.readdirSync(storagePath));
-  t.after(() => {
-    for (const file of fs.readdirSync(storagePath)) {
-      if (!filesBeforeUpload.has(file)) {
-        fs.unlinkSync(path.join(storagePath, file));
-      }
-    }
-  });
-
+test('faz upload, lista somente documentos do dono e baixa o arquivo', async () => {
   const form = new FormData();
   form.append('file', new Blob(['conteúdo de teste']), 'documento.txt');
 
   const uploadResponse = await fetch(`${baseUrl}/upload`, {
     method: 'POST',
+    headers: { 'X-User-Id': 'usuario-a' },
     body: form,
   });
+
   assert.equal(uploadResponse.status, 201);
-  const document = await uploadResponse.json();
+  const { document } = await uploadResponse.json();
+  assert.deepEqual(Object.keys(document).sort(), [
+    'id', 'originalName', 'owner', 'size', 'uploadedAt',
+  ]);
   assert.equal(document.originalName, 'documento.txt');
-  assert.equal(document.size, 18);
-  assert.ok(document.id);
-  assert.ok(document.uploadedAt);
-  assert.equal(Object.hasOwn(document, 'storedName'), false);
+  assert.equal(document.owner, 'usuario-a');
+  assert.equal(document.size, Buffer.byteLength('conteúdo de teste'));
+  assert.equal(Number.isNaN(Date.parse(document.uploadedAt)), false);
+  assert.equal(fs.readdirSync(storageDirectory).length, 1);
 
-  const listResponse = await fetch(`${baseUrl}/documents`);
-  assert.equal(listResponse.status, 200);
-  const listedDocuments = await listResponse.json();
-  assert.ok(listedDocuments.some(({ id }) => id === document.id));
+  const listResponse = await fetch(`${baseUrl}/documents`, {
+    headers: { 'X-User-Id': 'usuario-a' },
+  });
+  assert.deepEqual(await listResponse.json(), { documents: [document] });
 
-  const downloadResponse = await fetch(
-    `${baseUrl}/documents/${document.id}/download`,
-  );
+  const otherUserResponse = await fetch(`${baseUrl}/documents`, {
+    headers: { 'X-User-Id': 'usuario-b' },
+  });
+  assert.deepEqual(await otherUserResponse.json(), { documents: [] });
+
+  const downloadResponse = await fetch(`${baseUrl}/documents/${document.id}/download`, {
+    headers: { 'X-User-Id': 'usuario-a' },
+  });
   assert.equal(downloadResponse.status, 200);
   assert.equal(await downloadResponse.text(), 'conteúdo de teste');
   assert.match(downloadResponse.headers.get('content-disposition'), /documento\.txt/);
-});
 
-test('upload sem arquivo retorna erro de validação', async () => {
-  const uploadResponse = await fetch(`${baseUrl}/upload`, {
-    method: 'POST',
+  const unauthorizedResponse = await fetch(`${baseUrl}/documents/${document.id}/download`, {
+    headers: { 'X-User-Id': 'usuario-b' },
   });
-  assert.equal(uploadResponse.status, 400);
+  assert.equal(unauthorizedResponse.status, 404);
+  assert.deepEqual(await unauthorizedResponse.json(), {
+    error: { code: 'DOCUMENT_NOT_FOUND', message: 'Documento não encontrado.' },
+  });
 });
 
-test('download de documento inexistente retorna 404', async () => {
-  const downloadResponse = await fetch(`${baseUrl}/documents/inexistente/download`);
-  assert.equal(downloadResponse.status, 404);
+test('retorna erros JSON para identidade ou arquivo ausentes', async () => {
+  const missingOwnerResponse = await fetch(`${baseUrl}/documents`);
+  assert.equal(missingOwnerResponse.status, 400);
+  assert.deepEqual(await missingOwnerResponse.json(), {
+    error: { code: 'USER_ID_REQUIRED', message: 'O cabeçalho X-User-Id é obrigatório.' },
+  });
+
+  const form = new FormData();
+  const missingFileResponse = await fetch(`${baseUrl}/upload`, {
+    method: 'POST',
+    headers: { 'X-User-Id': 'usuario-a' },
+    body: form,
+  });
+  assert.equal(missingFileResponse.status, 400);
+  assert.deepEqual(await missingFileResponse.json(), {
+    error: { code: 'FILE_REQUIRED', message: 'Envie um arquivo no campo "file".' },
+  });
+});
+
+test('rejeita identificadores inválidos e caminhos fora do armazenamento', async () => {
+  const response = await fetch(`${baseUrl}/documents/invalido/download`, {
+    headers: { 'X-User-Id': 'usuario-a' },
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: 'INVALID_DOCUMENT_ID',
+      message: 'Identificador de documento inválido.',
+    },
+  });
+
+  await assert.rejects(
+    fileRepository.createReadStream('../arquivo-fora-do-storage'),
+    /Nome interno de arquivo inválido/,
+  );
+});
+
+test('rejeita campos extras no multipart', async () => {
+  const form = new FormData();
+  form.append('file', new Blob(['conteúdo']), 'documento.txt');
+  form.append('extra', 'valor');
+
+  const response = await fetch(`${baseUrl}/upload`, {
+    method: 'POST',
+    headers: { 'X-User-Id': 'usuario-a' },
+    body: form,
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: 'INVALID_MULTIPART_REQUEST',
+      message: 'O envio aceita somente um arquivo no campo "file".',
+    },
+  });
+});
+
+test('rejeita arquivos acima do limite e não deixa arquivo parcial', async () => {
+  const initialFileCount = fs.readdirSync(storageDirectory).length;
+  const form = new FormData();
+  form.append('file', new Blob(['x'.repeat(65)]), 'grande.txt');
+
+  const response = await fetch(`${baseUrl}/upload`, {
+    method: 'POST',
+    headers: { 'X-User-Id': 'usuario-a' },
+    body: form,
+  });
+
+  assert.equal(response.status, 413);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: 'FILE_TOO_LARGE',
+      message: 'O arquivo excede o tamanho máximo permitido.',
+    },
+  });
+  assert.equal(fs.readdirSync(storageDirectory).length, initialFileCount);
 });
