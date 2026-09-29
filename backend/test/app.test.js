@@ -9,6 +9,7 @@ const storageDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'dms-test-'));
 process.env.STORAGE_DIR = storageDirectory;
 process.env.MAX_UPLOAD_SIZE_BYTES = '64';
 const app = require('../src/app');
+const fileRepository = require('../src/repositories/fileRepository');
 let server;
 let baseUrl;
 
@@ -91,7 +92,47 @@ test('retorna erros JSON para identidade ou arquivo ausentes', async () => {
   });
 });
 
+test('rejeita identificadores inválidos e caminhos fora do armazenamento', async () => {
+  const response = await fetch(`${baseUrl}/documents/invalido/download`, {
+    headers: { 'X-User-Id': 'usuario-a' },
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: 'INVALID_DOCUMENT_ID',
+      message: 'Identificador de documento inválido.',
+    },
+  });
+
+  await assert.rejects(
+    fileRepository.createReadStream('../arquivo-fora-do-storage'),
+    /Nome interno de arquivo inválido/,
+  );
+});
+
+test('rejeita campos extras no multipart', async () => {
+  const form = new FormData();
+  form.append('file', new Blob(['conteúdo']), 'documento.txt');
+  form.append('extra', 'valor');
+
+  const response = await fetch(`${baseUrl}/upload`, {
+    method: 'POST',
+    headers: { 'X-User-Id': 'usuario-a' },
+    body: form,
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: {
+      code: 'INVALID_MULTIPART_REQUEST',
+      message: 'O envio aceita somente um arquivo no campo "file".',
+    },
+  });
+});
+
 test('rejeita arquivos acima do limite e não deixa arquivo parcial', async () => {
+  const initialFileCount = fs.readdirSync(storageDirectory).length;
   const form = new FormData();
   form.append('file', new Blob(['x'.repeat(65)]), 'grande.txt');
 
@@ -108,5 +149,5 @@ test('rejeita arquivos acima do limite e não deixa arquivo parcial', async () =
       message: 'O arquivo excede o tamanho máximo permitido.',
     },
   });
-  assert.equal(fs.readdirSync(storageDirectory).length, 1);
+  assert.equal(fs.readdirSync(storageDirectory).length, initialFileCount);
 });

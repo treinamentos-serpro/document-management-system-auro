@@ -1,4 +1,5 @@
 import DownloadButton from './DownloadButton.jsx';
+import formatFileSize from '../utils/formatFileSize.js';
 
 export default function DocumentList({ documents, ownerId, isLoading, error }) {
   if (isLoading) {
@@ -51,12 +52,6 @@ export default function DocumentList({ documents, ownerId, isLoading, error }) {
 function getExtension(fileName) {
   const extension = fileName.split('.').pop();
   return extension && extension !== fileName ? extension.slice(0, 4).toUpperCase() : 'FILE';
-}
-
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function formatDate(value) {

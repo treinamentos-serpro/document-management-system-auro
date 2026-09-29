@@ -45,6 +45,11 @@ app.use((error, req, res, next) => {
       code: 'INVALID_FILE_FIELD',
       message: 'Envie um único arquivo no campo "file".',
     },
+    LIMIT_FIELD_COUNT: {
+      status: 400,
+      code: 'INVALID_MULTIPART_REQUEST',
+      message: 'O envio aceita somente um arquivo no campo "file".',
+    },
   };
   const mappedError = uploadErrors[error.code];
   const status = mappedError?.status || error.status || 500;

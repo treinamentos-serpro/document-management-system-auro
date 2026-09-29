@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DocumentList from './components/DocumentList.jsx';
 import UploadComponent from './components/UploadComponent.jsx';
 import { listDocuments } from './services/api.js';
+import formatFileSize from './utils/formatFileSize.js';
 import './App.css';
 
 export default function App() {
@@ -10,6 +11,7 @@ export default function App() {
   const [documents, setDocuments] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
+  const ownerIdRef = useRef(ownerId);
 
   useEffect(() => {
     let isCurrent = true;
@@ -38,10 +40,18 @@ export default function App() {
   function handleOwnerSubmit(event) {
     event.preventDefault();
     const nextOwner = ownerDraft.trim();
-    if (nextOwner) setOwnerId(nextOwner);
+    if (nextOwner && nextOwner !== ownerId) {
+      ownerIdRef.current = nextOwner;
+      setOwnerId(nextOwner);
+      setDocuments([]);
+      setIsLoading(true);
+      setLoadError('');
+    }
   }
 
-  function handleUploaded(document) {
+  function handleUploaded(document, uploadedOwnerId) {
+    if (uploadedOwnerId !== ownerIdRef.current) return;
+
     setDocuments((currentDocuments) => [
       document,
       ...currentDocuments.filter((item) => item.id !== document.id),
@@ -111,7 +121,7 @@ export default function App() {
               </div>
               <span className="stat-divider" aria-hidden="true" />
               <div className="heading-stat">
-                <span className="stat-value">{formatTotalSize(totalBytes)}</span>
+                <span className="stat-value">{formatFileSize(totalBytes)}</span>
                 <span className="stat-label">armazenados</span>
               </div>
             </div>
@@ -125,7 +135,7 @@ export default function App() {
               </div>
               <span className="section-meta">UPLOAD</span>
             </div>
-            <UploadComponent ownerId={ownerId} onUploaded={handleUploaded} />
+            <UploadComponent key={ownerId} ownerId={ownerId} onUploaded={handleUploaded} />
           </section>
 
           <section className="documents-section" aria-labelledby="list-heading">
@@ -152,10 +162,4 @@ export default function App() {
       </main>
     </div>
   );
-}
-
-function formatTotalSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }

@@ -26,6 +26,10 @@ function listDocuments(owner) {
 }
 
 async function getDocumentForDownload(id, owner) {
+  if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) {
+    throw createHttpError(400, 'INVALID_DOCUMENT_ID', 'Identificador de documento inválido.');
+  }
+
   const document = documentsRepository.findById(id);
 
   if (!document || document.owner !== owner) {

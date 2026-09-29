@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { uploadDocument } from '../services/api.js';
+import formatFileSize from '../utils/formatFileSize.js';
 
 export default function UploadComponent({ ownerId, onUploaded }) {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -24,8 +25,9 @@ export default function UploadComponent({ ownerId, onUploaded }) {
     setError('');
     setSuccess('');
     try {
-      const document = await uploadDocument(selectedFile, ownerId);
-      onUploaded(document);
+      const uploadedOwnerId = ownerId;
+      const document = await uploadDocument(selectedFile, uploadedOwnerId);
+      onUploaded(document, uploadedOwnerId);
       setSelectedFile(null);
       if (inputRef.current) inputRef.current.value = '';
       setSuccess('Arquivo enviado.');
@@ -84,10 +86,4 @@ export default function UploadComponent({ ownerId, onUploaded }) {
       </div>
     </form>
   );
-}
-
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
