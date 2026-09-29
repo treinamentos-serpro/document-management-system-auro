@@ -21,8 +21,16 @@ function download(req, res) {
     return res.status(404).json({ error: 'Documento não encontrado.' });
   }
 
+  const storedName = path.basename(document.storedName);
+  if (
+    storedName !== document.storedName ||
+    !/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(storedName)
+  ) {
+    return res.status(404).json({ error: 'Documento não encontrado.' });
+  }
+
   return res.download(
-    path.join(__dirname, '../../storage', document.storedName),
+    path.join(__dirname, '../../storage', storedName),
     document.originalName,
   );
 }
